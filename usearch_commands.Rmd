@@ -1,0 +1,76 @@
+---
+title: "USEARCH_commands"
+author: "Michael Mann"
+date: "5/3/2022"
+output: html_document
+---
+
+
+This is just a record of the commands run on CARC (UNM's cluster)
+```{r setup}
+library(tidyverse)
+```
+
+
+
+I already processed the unique sequences for Ina's work so i will start with that file. Used parameters for unoise3 (I only have license for USEARCH9)
+Stored in ZOTUs folder locally. on CARC: /users/mimann/wheeler-scratch/arctic/clustering
+unoise_2022.slurm job. Finished April 29th 2022
+output: zotus.fa, unoise3.txt (no output which is odd but not needed), slurm-91226.out
+```{bash unoise_2022.slurm }
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=24:00:00
+#SBATCH --job-name=unoise
+
+
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+# using unoise2 but with unoise3 parameters
+/users/mimann/usearch9 -unoise2 Arctic_Fungi_uniques.fa -fastaout zotus.fa -tabbedout unoise3.txt -minampsize 8 -abskew 16
+
+
+```
+
+
+Given that some zotus could be the more abundant but subets of other zotus, I blasted them at 99% to find all of their hits. Will clean them up in a script (removing duplicate zotus). 
+
+Stored in ZOTUs folder locally. on CARC: /users/mimann/wheeler-scratch/arctic/clustering
+cleaning_up_zotus.slurm job. Finished May 3rd 2022
+output: zotus_duplicate_hits.b6, slurm-96069.out
+```{bash cleaning_up_zotus.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=00:10:00
+#SBATCH --job-name=cleanup_zotus
+#SBATCH --partition=debug
+
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+# using unoise2 but with unoise3 parameters
+/users/mimann/usearch9 -usearch_global zotus.fa -db zotus.fa -id 0.99 -blast6out zotus_duplicate_hits.b6 -strand both -maxaccepts 500 -threads 8
+
+```
+
+mapping back otus using the cleaned up zotu file. 
+```{bash mapping_zotus.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=48:00:00
+#SBATCH --job-name=map_zotus
+
+# note this is in a different folder than the rest of the analyses. 
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+# using the filtered data so its slightly more high quality for mapping. 
+# also a much smaller file
+gunzip arctic_filtered.fasta.gz
+
+
+/users/mimann/usearch9 -usearch_global arctic_filtered.fasta -db zotus_removed_duplicates.fa -otutabout zotu_table.txt -threads 8 -id 0.995
+```
+
+Also figuring out taxonomy

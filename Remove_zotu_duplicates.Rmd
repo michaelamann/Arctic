@@ -1,0 +1,44 @@
+---
+title: "remove_zotu_duplicates"
+author: "Michael Mann"
+date: "5/3/2022"
+output: html_document
+---
+Since we included forward reads in the analysis, this can create a unique problem for the otu/zotu called. If the forward read (~60% of the whole read) is more abundant than the full read, then it can create two separate zotus that are indistinguishable. This code finds those shorter ones and removes them from the dataset. 
+
+
+```{r setup}
+library(tidyverse)
+library(microseq)
+```
+
+
+Read in hit data that the zotus blasted against itself at 99% or higher. 
+```{r read in data}
+  # using blast6 column names (listed on usearch)
+hits <- read_table("ZOTUs/zotus_duplicate_hits.b6", 
+                   col_names = c("Query_Label", "Target_Label", "Percent_Identity", "Alignment_Length", 
+                                 "Mismatches", "Gaps", "Start_Query", "End_Query", "Start_Target", "End_Target", 
+                                 "E_Value", "Bit_score"))
+
+zotus <- readFasta("ZOTUs/zotus.fa")
+```
+
+
+Cleaning up hits that are likely due to using forward reads that are more abudnant than the longer full reads. 
+Just a problem that occur with using a greedy algorithm. 
+```{r clean up hits}
+
+potential_duplicates <- 
+  hits %>%
+  filter(Percent_Identity== 100) %>% # finding identical sequences
+  filter(Query_Label != Target_Label)  %>% # remove hits to the same sequence. 
+  filter(End_Query <  End_Target) %>% # find query seqs that are shorter than their targets. These probably need to be removed.
+  pull(Query_Label)
+
+
+zotus %>%
+  filter(!(Header %in% potential_duplicates)) %>% # remove duplicates
+  writeFasta("ZOTUs/zotus_removed_duplicates.fa")
+```
+
