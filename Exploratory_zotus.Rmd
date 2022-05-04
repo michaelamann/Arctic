@@ -1,0 +1,42 @@
+---
+title: "zotu_table_processing"
+author: "Michael Mann"
+date: "5/3/2022"
+output: html_document
+---
+
+Cleaning up and seeing which zOTUs map back to 
+```{r setup}
+library(tidyvere)
+```
+
+
+```{r read in zotu table}
+
+zotu_table <- 
+  read_table("ZOTUs/zotu_table.txt") %>%
+  rename(zOTU = `#OTU`)
+
+
+```
+
+
+```{r exploratory}
+sample_totals <- 
+  zotu_table %>%
+  select(-negcontrol) %>% # hit rare things that werent included as zotus
+  pivot_longer(cols = where(is.numeric), names_to = "Sample", values_to = "Abundance") %>%
+  group_by(Sample) %>%
+  summarise(total = sum(Abundance), .groups = "drop")
+summary(sample_totals$total)
+
+
+zotu_totals <- 
+  zotu_table %>%
+  select(-negcontrol) %>% # hit rare things that werent included as zotus
+  pivot_longer(cols = where(is.numeric), names_to = "Sample", values_to = "Abundance") %>%
+  group_by(zOTU) %>%
+  summarise(total = sum(Abundance), .groups = "drop") 
+summary(zotu_totals$total)
+
+```

@@ -55,6 +55,10 @@ cd /users/mimann/wheeler-scratch/arctic/clustering
 ```
 
 mapping back otus using the cleaned up zotu file. 
+
+Stored in ZOTUs folder locally. on CARC: /users/mimann/wheeler-scratch/arctic/clustering
+mapping_zotus.slurm job. Finished May 3rd 2022
+output: zotu_table.txt, slurm-96270.out
 ```{bash mapping_zotus.slurm}
 #!/bin/bash
 #SBATCH --ntasks=8
@@ -67,10 +71,44 @@ cd /users/mimann/wheeler-scratch/arctic/clustering
 
 # using the filtered data so its slightly more high quality for mapping. 
 # also a much smaller file
-gunzip arctic_filtered.fasta.gz
+# gunzip arctic_filtered.fasta.gz
 
 
-/users/mimann/usearch9 -usearch_global arctic_filtered.fasta -db zotus_removed_duplicates.fa -otutabout zotu_table.txt -threads 8 -id 0.995
+/users/mimann/usearch9 -usearch_global arctic_filtered.fasta -db zotus_removed_duplicates.fa -otutabout zotu_table.txt -threads 8 -id 0.995 -strand plus
 ```
 
 Also figuring out taxonomy
+
+
+output: zotu_taxonomy.txt, slurm-96836.out
+```{bash zotu_taxonomy.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=01:00:00
+#SBATCH --job-name=zotu_taxonomy
+#SBATCH --partition=debug
+
+# note this is in a different folder than the rest of the analyses. 
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+/users/mimann/usearch9 -sintax zotus_removed_duplicates.fa -db /users/mimann/wheeler-scratch/rmbl_seq_clustering_Jan_2020/data/utax_reference_dataset_all_04.02.2020_corrected.fasta -tabbedout zotu_taxonomy.txt -strand both -sintax_cutoff 0.8
+```
+
+
+Checking which zOTUs match up with Leho's OTUs
+```{bash tedersoo_hits.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=48:00:00
+#SBATCH --job-name=map_Tedersoo
+
+# note this is in a different folder than the rest of the analyses. 
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+
+/users/mimann/usearch9 -usearch_global zotus_removed_duplicates.fa -db Tedersoo_Fungi_GSMc_OTUs.fasta -otutabout zotu_table.txt -threads 8  -blast6out zotus_duplicate_hits_tedersoo.b6 -strand both -maxaccepts 500 -threads 8
+
+```
+

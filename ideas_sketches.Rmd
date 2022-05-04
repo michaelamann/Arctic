@@ -1,0 +1,18 @@
+---
+title: "ideas"
+author: "Michael Mann"
+date: "5/3/2022"
+output: html_document
+---
+
+I want to use 
+
+1. match up lees top zOTUs with lehos dataset and see whe
+
+
+for every genus with at least 3 members:
+
+
+create a map where a facet for each member and overlay: gray - every instance of that genus. blue - every instance within 97%. and then in green - every instance at 100%. 
+
+I want to find particular genera that seem to have unique arctic species. 
