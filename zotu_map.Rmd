@@ -1,0 +1,148 @@
+---
+title: "Zotu_map"
+author: "Michael Mann"
+date: "5/9/2022"
+output: html_document
+---
+
+```{r setup}
+library(tidyverse)
+library(furrr)
+#library(EcolUtils)
+```
+
+
+```{r read in data}
+tedersoo_hits <- read_table("ZOTUs/zotus_duplicate_hits_tedersoo.b6", 
+                   col_names = c("Query_Label", "Target_Label", "Percent_Identity", "Alignment_Length", 
+                                 "Mismatches", "Gaps", "Start_Query", "End_Query", "Start_Target", "End_Target", 
+                                 "E_Value", "Bit_score"))
+
+Fungi_GSMc_OTU_Table <- 
+  read_table("Tedersoo_dataset/Fungi_GSMc_OTU_Table.txt")
+```
+
+
+
+```{r functions needed}
+
+
+# used to drop samples with too few reads
+sample_depth_calc <- function(data){
+  sum(data$Abundance)
+}
+
+#create custom function that doen't print out which permutation is completed. 
+#library(EcolUtils) used for rrarefy.perm() for computing 1000 rarefactions
+#these create a vector of the samples that pass
+rrarefy.perm_custom <- function (x, sample = min(rowSums(x)), n = 100, round.out = T){
+  require(vegan)
+  y <- rrarefy(x, sample)
+  for (i in 2:n) {
+    #cat("Permutation ", i, " out of ", n, "\n")
+    y <- y + rrarefy(x, sample)
+  }
+  if (round.out == T) 
+    y <- round(y/n)
+  if (round.out == F) 
+    y <- y/n
+  y
+}
+
+
+
+# just pivot and make remove zeros
+cleanup <- function(data){
+  data %>%
+  pivot_longer(cols = where(is.numeric), names_to = "Sample", values_to = "Abundance") %>% 
+  filter(Abundance > 0)
+  
+}
+
+### main function ### 
+# run every rarefaction 1000 times and sample at the depth provided (1500)
+cleanup_rrarefy_perm  <- function(input, depth){
+input %>%
+  group_by(Sample) %>%
+  nest() %>%
+  ungroup() %>%
+  mutate(sample_depth = map_dbl(data, sample_depth_calc)) %>% # calculate reads per sample
+  filter(sample_depth >= depth) %>% # drop samples with fewer than 1500 reads
+  select(-sample_depth) %>%
+  unnest(data) %>%
+  pivot_wider(names_from = OTU, values_from = Abundance, values_fill = 0) %>% # make it wide again
+  column_to_rownames("Sample") %>%
+  rrarefy.perm_custom(n = 1000, sample = depth) %>%
+  as.data.frame() %>%
+  rownames_to_column("Sample") %>%
+  pivot_longer(cols = where(is.numeric), names_to = "OTU", values_to = "Abundance") %>%
+  filter(Abundance > 0)
+}
+
+
+
+
+
+
+```
+
+```{r splits}
+# no memory for running everything at once so i split up the function into three smaller jobs. 
+
+
+
+# splitting up the table into 8 batches.
+Fungi_GSMc_OTU_Table_raw <- 
+  # create all the splits by subsetting
+  tibble(split = list(select(Fungi_GSMc_OTU_Table, c(1:400)), 
+                      select(Fungi_GSMc_OTU_Table, c(1, 401:800)),
+                      select(Fungi_GSMc_OTU_Table, c(1, 801:1200)),
+                      select(Fungi_GSMc_OTU_Table, c(1, 1201:1600)),
+                      select(Fungi_GSMc_OTU_Table, c(1, 1601:2000)),
+                      select(Fungi_GSMc_OTU_Table, c(1, 2001:2400)),
+                      select(Fungi_GSMc_OTU_Table, c(1, 2401:2800)),
+                      select(Fungi_GSMc_OTU_Table, c(1, 2801:3201)))) %>%
+  mutate(raw = map(split, .f = cleanup)) %>% # run the cleanup function that pivots and removes zeros
+  select(-split) # drop intial data
+
+# drop the original table
+rm(Fungi_GSMc_OTU_Table)
+
+
+
+
+
+# essentially rarefy but way faster (i drop things below 1 )
+depth <- 1000
+
+Fungi_GSMc_OTU_Table_rarefied <- 
+  Fungi_GSMc_OTU_Table_raw %>%
+  unnest(raw) %>%
+  group_by(Sample) %>%
+  nest() %>%
+  ungroup() %>%
+  mutate(sample_depth = map_dbl(data, sample_depth_calc)) %>% # calculate reads per sample
+  filter(sample_depth >= depth) %>% # drop samples with fewer than 1500 reads
+  select(-sample_depth) %>%
+  unnest(data) %>%
+  group_by(Sample) %>%
+  mutate(rarefied = depth * Abundance / sum(Abundance)) %>%
+  ungroup() %>%
+  filter(rarefied >= 1) %>%
+  select(-Abundance)
+
+
+
+# i want to have everything merged together so its easier to switch out the data later. 
+
+Fungi_GSMc_OTU_Table_finished <- 
+  Fungi_GSMc_OTU_Table_raw %>%
+  unnest(raw) %>%
+  full_join(Fungi_GSMc_OTU_Table_rarefied, by = c("Sample", "OTU")) %>%
+  replace_na(list(rarefied = 0))
+  
+
+
+
+
+```

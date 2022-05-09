@@ -97,6 +97,7 @@ cd /users/mimann/wheeler-scratch/arctic/clustering
 
 
 Checking which zOTUs match up with Leho's OTUs
+output: zotus_duplicate_hits_tedersoo.b6, slurm-103614.out
 ```{bash tedersoo_hits.slurm}
 #!/bin/bash
 #SBATCH --ntasks=8
