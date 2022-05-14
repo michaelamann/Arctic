@@ -5,6 +5,24 @@ date: "5/10/2022"
 output: html_document
 ---
 
+
+QUICK OVERVIEW
+
+i tried to use a nested design so i had good geographic coverage. 
+
+ran all combinations at the location level. Found top five groups of 4 samples. 
+Then i compared those candidate groups at the "Feature" level (aka kinda like regional)
+
+Then i tried to get more samples by comparing the results to long reads (sanger and pacbio)
+
+reran at the feature level to get four more samples but took into account the zotus (aka target zotus) that were still missing. 
+
+At the end i looked for common zOTUs missed that were really abundant in a sample to get some other low hanging fruit. 
+
+lastly i created graphs to see how much of the community i am retrieving when compared at the subzone level (each point is a site) of each feature. At the bottom, you can also see how well the samples do at covering genera or orders of fungi. Overall it worked well but I might throw in a few more samples of the  outliers.
+
+
+
 Figuring out which genera to focus on. 
 ```{r setup}
 library(tidyverse)
