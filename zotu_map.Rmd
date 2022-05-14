@@ -283,6 +283,11 @@ Now to merge two datasets.
 
 going to use a tacomic depth (family or genus)
 ```{r merging two datasets}
+
+write_rds(zotu_arctic_metadata_merged, "zotu_arctic_metadata_merged.Rdata")
+write_rds(Fungi_GSMc_OTU_metadata_merged, "Fungi_GSMc_OTU_metadata_merged.Rdata")
+
+
 ZOTU_list <- 
   zotu_arctic_metadata_merged %>%
   group_by(ZOTU) %>%

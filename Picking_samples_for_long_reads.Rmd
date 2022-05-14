@@ -1,0 +1,508 @@
+---
+title: "Picking_samples_for_long_Reads"
+author: "Michael Mann"
+date: "5/10/2022"
+output: html_document
+---
+
+Figuring out which genera to focus on. 
+```{r setup}
+library(tidyverse)
+```
+
+
+reading in data from zotu_map file
+```{r read in data}
+zotu_arctic_metadata_merged <- read_rds("zotu_arctic_metadata_merged.Rdata")
+
+```
+
+
+
+```{r summarise by order}
+
+
+# how to count up number of zotus
+#  
+
+zotu_arctic_metadata_merged %>% 
+  filter(total_rarefied_abundnace > 0) %>%
+  group_by(Location, order, phylum) %>%
+  summarise(total_rarefied_reads = sum(total_rarefied_abundnace), 
+            zotus_count = n(), .groups = "drop")  %>%
+    drop_na(order) %>%
+  group_by(order) %>%
+  mutate(total_rarefied_reads_Arctic = sum(total_rarefied_reads)) %>%
+  arrange(desc(total_rarefied_reads_Arctic)) %>%
+  ungroup() %>%
+  filter(total_rarefied_reads_Arctic > 2000) %>%
+  ggplot(aes(x = Location, y = total_rarefied_reads)) + 
+  geom_bar(stat ="identity") + facet_wrap(order~phylum, scales="free_x") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + xlab("Order")
+  
+
+
+
+
+
+```
+
+
+
+
+```{r }
+## Arctic metadata ##
+arctic_metadata <- read_csv("Arctic_dataset/DNA_samples_CODES_old_new.csv")
+
+arctic_coords <- read_csv("Arctic_dataset/GPS_coord_rough.csv")
+
+
+arctic_taxonomy <- 
+  read_table("ZOTUs/zotu_taxonomy.txt", col_names = c("ZOTU", "Stats", "Direction", "Taxonomy")) %>%
+  separate(Taxonomy, into = c("kingdom", "phylum", "class", "order","family", "genus", "species"), sep = ",") %>% # split the tax out
+  select(-Stats) %>%
+  mutate(across(kingdom:species, ~str_remove(string = .x, pattern = "^[:alpha:]:"))) %>% # remove nonsense 
+  mutate(ZOTU = str_remove(ZOTU, pattern = ";uniq.*"))
+
+arctic_metadata <- 
+  arctic_metadata %>%
+  left_join(arctic_coords, by = "Location" ) %>%
+  rename(Sample= `Suggest final name`)
+
+
+
+
+zotu_arctic_raw <- 
+  read_table("ZOTUs/zotu_table.txt") %>%
+  rename(ZOTU =  `#OTU`) %>%
+  pivot_longer(cols = where(is.numeric), names_to = "Sample", values_to = "Abundance") %>%
+  select(-negcontrol) %>%
+  filter(Abundance > 0)
+```
+
+
+```{r}
+zotu_arctic_raw %>%
+  group_by(Sample) %>%
+  nest() %>%
+  left_join(arctic_metadata, by = "Sample") %>%
+  select(Sample, data, Location, Feature, Subzone) %>%
+  group_by(Location, Feature, Subzone) %>%
+  count()
+
+
+site_nested_samples <- 
+  zotu_arctic_raw %>%
+  mutate(Sample = str_remove(Sample, "2013")) %>%
+  left_join(arctic_metadata, by = "Sample")  %>%
+  select(Sample, Location, Feature, Subzone, ZOTU,  Abundance) %>%
+  filter(Sample != "ID" & Sample != "MockB" & Sample != "NAB12", Sample != "ER_I2") %>% # remove standards and missign data
+  group_by(Sample) %>%
+  mutate(rel_Abundance =  100 * Abundance/sum(Abundance)) %>%
+  ungroup() %>%
+  group_by(ZOTU) %>%
+  mutate(total_rel_Abundance = sum(rel_Abundance)) %>%
+  ungroup() %>%
+  filter(total_rel_Abundance > 1) %>% # most of these rare taxa are noise so i will remvoe them. 
+  select(-total_rel_Abundance) %>%
+  group_by(Location, Feature, Subzone) %>%
+  nest() 
+
+# function to find all the number zotus present in the selection
+count_zotus <- function(data){
+  
+  data %>%
+    pull(ZOTU) %>%
+    unique() %>%
+    length()
+  
+  
+}
+
+# creates every combination for the site and tallies up the number of ZOTUs hits. returns top X number of combinations (i set it to 100)
+top_site_candidates <- function(data, num_samples_to_select, num_of_choices) {
+    
+    nested_samples <- 
+        data %>%
+        filter(rel_Abundance > .5) %>%
+        group_by(Sample) %>%
+        nest() %>%
+        ungroup()
+    
+    
+    combn(nested_samples$Sample, num_samples_to_select) %>%
+        as.data.frame() %>%
+        pivot_longer(cols = everything(), names_to = "choice", values_to = "Sample") %>%
+        left_join(nested_samples, by = "Sample") %>%
+        unnest(data) %>%
+        group_by(choice) %>%
+        nest() %>%
+        mutate(num_zotus = map_int(data, count_zotus)) %>%
+        ungroup() %>%
+        arrange(desc(num_zotus)) %>%
+        slice_head(n = num_of_choices) 
+}
+
+
+
+candidate_nested_samples <- 
+  site_nested_samples %>%
+  mutate(candiate_sample_combos = 
+           map(data, top_site_candidates, 
+               num_samples_to_select = 4,  
+               num_of_choices = 5)) 
+
+
+
+
+
+
+## done at the location level. now lets compare at the feature level
+
+
+
+# basically using the same approach as before but working on the 
+top_feature_candidates <- function(data, num_of_choices) {
+    
+    nested_samples_list <- 
+      data %>%
+      group_by(Location, Subzone, choice) %>%
+      nest() %>%
+      select(-data) %>%
+      ungroup() %>%
+      mutate(location_subzone = paste(Location, Subzone, sep ="_")) %>%
+      select(location_subzone, choice) %>%
+      group_by(location_subzone) %>%
+      group_split() %>%
+      set_names(map_chr(., ~.x$location_subzone[1])) %>%
+      map(., ~ select(.x, -location_subzone))
+      
+  location_subzone_names <- names(nested_samples_list)
+      
+   nested_samples_df <-  
+     bind_cols(nested_samples_list) 
+   
+   names(nested_samples_df) <- location_subzone_names
+   
+
+   # creates combos
+ processed_df <- 
+    nested_samples_df %>%
+     cross_df() %>%
+     rownames_to_column("Overall-Choice") %>%
+     pivot_longer(cols = contains("_"), names_to = "location_subzone", values_to = "choice") %>%
+     rename(Overall_choice = `Overall-Choice`) %>%
+     separate(location_subzone, into = c("Location", "Subzone"), sep = "_") %>%
+     left_join(data, by = c("Location", "Subzone", "choice")) %>%
+     group_by(Overall_choice) %>%
+     nest() %>%
+     mutate(num_zotus_feature_level = map_int(data, count_zotus)) %>%
+     ungroup() %>%
+     arrange(desc(num_zotus_feature_level)) %>%
+     rename(Feature_choice_set = data) %>%
+     slice_head(n = num_of_choices) 
+ 
+ 
+   
+ Samples_present <- 
+   processed_df %>%
+     unnest(Feature_choice_set) %>%
+     select(Location,Subzone, Sample) %>%
+     distinct()
+ 
+ processed_df %>%
+   mutate(Samples_chosen = list(Samples_present))
+   
+}
+
+
+by_feature_selection <- 
+  candidate_nested_samples %>%
+  ungroup() %>%
+  select(-data) %>%
+  unnest(candiate_sample_combos) %>%
+  unnest(data) %>%
+  group_by(Feature) %>%
+  nest() %>%
+  mutate(Feature_level_choice =  map(data, top_feature_candidates, num_of_choices = 1))  %>% # figure out the combos of samples that work best at the feature level
+  unnest(Feature_level_choice)
+
+# pulling out just the samples chosen 
+samples_chosen <- 
+  by_feature_selection %>%
+  select(Samples_chosen) %>%
+  unnest(Samples_chosen) %>%
+  ungroup()
+
+samples_chosen_list <- 
+  samples_chosen %>%
+  pull(Sample) %>%
+  unique()
+
+# list of all zotus perceived to be captured by these samples
+otus_captured <- 
+  by_feature_selection %>%
+  ungroup() %>%
+  select(Feature_choice_set) %>%
+  unnest(Feature_choice_set) %>%
+  pull(ZOTU) %>%
+  unique()
+
+```
+
+
+```{r cal coverage based on rarefied reads}
+site_nested_samples_captured <- 
+  site_nested_samples %>%
+  ungroup() %>%
+  unnest(data) %>%
+  mutate(captured = case_when(ZOTU %in% otus_captured ~ "Captured", TRUE ~ "Missing"))
+
+```
+
+
+WE have pacbio and sanger sequencing data. Now adding that
+```{r add long read matches}
+
+
+pacbio_hits <- 
+  read_table("ZOTUs/zotus_duplicate_hits_pacbio.b6", 
+                   col_names = c("Query_Label", "Target_Label", "Percent_Identity", "Alignment_Length", 
+                                 "Mismatches", "Gaps", "Start_Query", "End_Query", "Start_Target", "End_Target", 
+                                 "E_Value", "Bit_score"))  %>%
+  select(Query_Label) %>%
+  rename(ZOTU = Query_Label) %>%
+  mutate(PacBio_Recovered = TRUE) %>%
+  mutate(ZOTU = str_remove(ZOTU, ";uniq.*")) %>%
+  distinct() # remove duplicates
+
+
+sanger_hits <- 
+  read_table("ZOTUs/zotus_duplicate_hits_sanger.b6", 
+                   col_names = c("Query_Label", "Target_Label", "Percent_Identity", "Alignment_Length", 
+                                 "Mismatches", "Gaps", "Start_Query", "End_Query", "Start_Target", "End_Target", 
+                                 "E_Value", "Bit_score"))  %>%
+  select(Query_Label) %>%
+  rename(ZOTU = Query_Label) %>%
+  mutate(Sanger_Recovered = TRUE) %>% 
+  mutate(ZOTU = str_remove(ZOTU, ";uniq.*")) %>%
+  distinct()
+
+# read in taxonomy
+arctic_taxonomy <- 
+  read_table("ZOTUs/zotu_taxonomy.txt", col_names = c("ZOTU", "Stats", "Direction", "Taxonomy")) %>%
+  separate(Taxonomy, into = c("kingdom", "phylum", "class", "order","family", "genus", "species"), sep = ",") %>% # split the tax out
+  select(-Stats) %>%
+  mutate(across(kingdom:species, ~str_remove(string = .x, pattern = "^[:alpha:]:"))) %>% # remove nonsense 
+  mutate(ZOTU = str_remove(ZOTU, pattern = ";uniq.*"))
+
+
+
+
+site_nested_samples_captured_long_reads<- 
+  site_nested_samples_captured %>%
+  left_join(pacbio_hits, by = "ZOTU") %>%
+  left_join(sanger_hits, by = "ZOTU") %>%
+  mutate(ZOTU_order = str_remove(ZOTU, "Otu")) %>%
+  mutate(ZOTU_order = as.numeric(ZOTU_order)) %>%
+  group_by(ZOTU, ZOTU_order, Sanger_Recovered, PacBio_Recovered, captured) %>%
+  summarise(Total_rel_abunandce = sum(rel_Abundance), .groups = "drop") %>%
+  mutate(must_need = case_when(is.na(PacBio_Recovered) & 
+                                 is.na(Sanger_Recovered) & 
+                                 captured == "Missing" ~ "TRUE")) %>%
+  left_join(arctic_taxonomy, by = "ZOTU")
+
+
+
+
+```
+
+
+
+From examining geopora and russula, it appears the true variants are the ones wiht a  Total_rel_abunandce >= 3. The ones that are less are probably intragenomic variation. 
+I want to make sure I capture all of those so I am going to pull out all the samples that have those zOTUs. 
+```{r find samples }
+
+
+# find all zotus without a matching long read and not already captured by previous samples selected.
+
+zotus_to_target <-
+  site_nested_samples_captured_long_reads %>%
+  filter(must_need == TRUE) %>%
+  filter(Total_rel_abunandce >= 3) %>%
+  pull(ZOTU)
+
+# taking same initial df from above but pulling out rows with those zotus.
+# this will limit my list to samples that are known to have those zotus
+site_nested_samples %>%
+  unnest(data) %>%
+  ungroup() %>%
+  filter(rel_Abundance >= 1) %>% # theses are probably too rare to get.
+  filter(ZOTU %in% zotus_to_target) %>%
+  group_by(Sample, Location, Feature, Subzone) %>%
+  nest() %>%
+  group_by(Location, Feature, Subzone) %>%
+  nest() %>%
+  rename(samples = data)
+
+site_nested_samples %>%
+  unnest(data) %>%
+  ungroup() %>%
+  filter(rel_Abundance >= .5) %>% # theses are probably too rare to get.
+  filter(ZOTU %in% zotus_to_target) %>%
+  arrange(desc(rel_Abundance)) %>%
+  pull(ZOTU) %>%unique() %>% length()
+
+  
+  
+  
+```
+
+
+
+```{using zotu_target to find 40 more samples to use}
+
+target_zotu_df <- 
+  site_nested_samples %>%
+  unnest(data) %>%
+  ungroup() %>%
+  filter(rel_Abundance >= 1) %>% # theses are probably too rare to get.
+  filter(ZOTU %in% zotus_to_target) %>%
+  group_by(Feature) %>%
+  nest() %>%
+    mutate(candidate_target = 
+           map(data, top_site_candidates, 
+               num_samples_to_select = 4,  
+               num_of_choices = 1)) 
+
+
+target_zotu_df_unnested <- 
+  target_zotu_df %>% 
+  select(-data) %>% 
+  unnest(candidate_target) %>% 
+  unnest(data) %>%
+  ungroup()
+
+
+target_zotu_df_samples <- 
+  target_zotu_df_unnested %>%
+  pull(Sample) %>%
+  unique()
+
+  
+  #### LAST SELECTION ### Getting everything that is still missign but pretty common in one sample (above 10 %)
+  last_batch_common_zotus <- 
+  site_nested_samples %>%
+  unnest(data) %>%
+  ungroup() %>%
+  filter(rel_Abundance >= 1) %>% # theses are probably too rare to get.
+  filter(ZOTU %in% zotus_to_target) %>%
+  group_by(ZOTU) %>%
+  add_count(name = "num_samples_present") %>%
+  ungroup() %>%
+  mutate(target_zotu_captued = case_when(ZOTU %in% unique(target_zotu_df_unnested$ZOTU) ~ "Captured", TRUE ~ "Missing" )) %>%
+  filter(rel_Abundance >= 10 & target_zotu_captued == "Missing" ) 
+  
+  last_batch_common_zotus_samples <- 
+  last_batch_common_zotus %>%
+    pull(Sample) %>% 
+    unique()
+
+```
+
+
+
+```{r putting them all together}
+
+all_samples_selected <- c(
+samples_chosen_list, # first roung
+  target_zotu_df_samples, # second round
+  last_batch_common_zotus_samples # third round where i grab ones wiht comon taxa
+)
+  
+
+# number of samples proposed to collect
+length(all_samples_selected)
+
+all_zotus_captured_1percent <- 
+  site_nested_samples %>%
+  ungroup() %>%
+  unnest(data) %>%
+  filter(rel_Abundance > 1) %>%
+  filter(Sample %in% all_samples_selected) %>%
+  pull(ZOTU) %>%
+  unique()
+  
+
+
+### Seeing how each the coverage looks! ####
+
+# to get the subzones sorted correctly need to make this vector 
+
+
+# JUST BASED ON THE SAMPLES PROPOSED TO SEQUENCE
+
+site_nested_samples %>%
+  ungroup() %>%
+  unnest(data) %>%
+  mutate(Recovered = case_when(ZOTU %in% all_zotus_captured_1percent  ~ "Captured", TRUE ~ "Missing")) %>%
+  group_by(Location, Feature, Subzone, Sample, Recovered) %>%
+  summarise(total_rel_abundance = sum(rel_Abundance), .groups= "drop") %>%
+  filter(Recovered == "Captured") %>%
+  ggplot(aes(x = Subzone,  y = total_rel_abundance, color =Subzone )) + geom_boxplot() + facet_wrap(~Feature, scales = "free_x" )  
+
+
+long_read_for_plot <- 
+  site_nested_samples_captured_long_reads %>%
+  select(ZOTU, Sanger_Recovered, PacBio_Recovered)
+
+
+
+### PLOT INCLUDING LONG READ HITS
+
+site_nested_samples %>%
+  ungroup() %>%
+  unnest(data) %>%
+  left_join(long_read_for_plot, by = "ZOTU") %>%
+    mutate(Recovered = case_when(ZOTU %in% all_zotus_captured_1percent | 
+                                   Sanger_Recovered == TRUE | 
+                                   PacBio_Recovered == TRUE  ~ "Captured", TRUE ~ "Missing")) %>%
+  group_by(Location, Feature, Subzone, Sample, Recovered) %>%
+  summarise(total_rel_abundance = sum(rel_Abundance), .groups= "drop") %>%
+  filter(Recovered == "Captured") %>%
+  ggplot(aes(x = Subzone,  y = total_rel_abundance, color =Subzone )) + geom_boxplot() + facet_wrap(~Feature, scales = "free_x" )  
+
+
+
+
+
+
+site_nested_samples %>%
+  ungroup() %>%
+  unnest(data) %>%
+  left_join(long_read_for_plot, by = "ZOTU") %>%
+    mutate(Recovered = case_when(ZOTU %in% all_zotus_captured_1percent | 
+                                   Sanger_Recovered == TRUE | 
+                                   PacBio_Recovered == TRUE  ~ "Captured", TRUE ~ "Missing")) %>%
+  View()
+  
+
+
+
+### can play around with this to see how it does across different taxonomic groups (alter the grouping for genus or order etc.)
+site_nested_samples %>%
+  ungroup() %>%
+  unnest(data) %>%
+  left_join(long_read_for_plot, by = "ZOTU") %>%
+    mutate(Recovered = case_when(ZOTU %in% all_zotus_captured_1percent | 
+                                   Sanger_Recovered == TRUE | 
+                                   PacBio_Recovered == TRUE  ~ "Captured", TRUE ~ "Missing")) %>%
+  left_join(arctic_taxonomy, by = "ZOTU") %>%
+  group_by(family, Recovered) %>%
+  summarise(total_rel_abundance = sum(rel_Abundance), .groups = "drop") %>%
+  pivot_wider(names_from = Recovered, values_from = total_rel_abundance, values_fill = 0) %>%
+  mutate(total_rel_abundance = Captured + Missing) %>%
+  mutate(perent_recovered = 100 * Captured / (total_rel_abundance)) %>%
+  View()
+  
+```
