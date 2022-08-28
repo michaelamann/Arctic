@@ -378,7 +378,7 @@ site_nested_samples %>%
 
 
 
-```{using zotu_target to find 40 more samples to use}
+```{r using zotu_target to find 40 more samples to use}
 
 target_zotu_df <- 
   site_nested_samples %>%
@@ -523,4 +523,15 @@ site_nested_samples %>%
   mutate(perent_recovered = 100 * Captured / (total_rel_abundance)) %>%
   View()
   
+```
+
+
+
+```{r create sample list for PCR try}
+
+arctic_metadata %>%
+  filter(Sample %in% all_samples_selected) %>%
+  select(1:16) %>%
+  write_csv("PCR/first_pass_PCR.csv")
+
 ```

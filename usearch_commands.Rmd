@@ -113,3 +113,72 @@ cd /users/mimann/wheeler-scratch/arctic/clustering
 
 ```
 
+
+checking which zotus map back to long reads. Helpful to know which samples to prioritize. 
+output:zotus_duplicate_hits_pacbio.b6, zotus_duplicate_hits_sanger.b6
+```{bash long_read_hits.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=48:00:00
+#SBATCH --job-name=map_long_Reads
+
+# note this is in a different folder than the rest of the analyses. 
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+
+/users/mimann/usearch9 -usearch_global zotus_removed_duplicates.fa -db /users/mimann/wheeler-scratch/pacbio/run_2/uniques.fasta -threads 8  -blast6out zotus_duplicate_hits_pacbio.b6 -strand both -maxaccepts 500 -threads 8 -id 1.00
+
+
+/users/mimann/usearch9 -usearch_global zotus_removed_duplicates.fa -db /users/mimann/wheeler-scratch/arctic/matching_long_reads/all_arctic_sanger.fasta -threads 8  -blast6out zotus_duplicate_hits_sanger.b6 -strand both -maxaccepts 500 -threads 8 -id 1.00
+
+```
+
+running uparse at 98% so i can use this for removing chimeras prior to clustering against Leho dataset
+-------
+rerunning clustering at 98%. i will need to download the uparse output and manually filter out the chimeras. Then I will 
+```{bash   chimera_detection.slurm}
+
+
+#!/bin/bash
+#SBATCH --ntasks=1
+#SBATCH --mem=0
+#SBATCH --time=4:00:00
+#SBATCH --job-name=finding_chimeras
+
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+
+/users/mimann/usearch8.1.1861_i86linux32 -cluster_otus Arctic_Fungi_uniques.fa -uparseout uparse.txt -otu_radius_pct .98
+```
+
+
+
+```{r clean up fasta to remove chimeras}
+library(microseq)
+library(tidyverse)
+
+uparse_calls <- read_table("Chimera_removal/uparse.txt", col_names = c("Read", "Call", "Percent", "Extra"))
+
+unique_reads <- readFasta("Chimera_removal/Arctic_Fungi_uniques.fa")
+
+# find all chimeras from uparse file
+chimeras <- 
+  uparse_calls %>%
+  filter(Call != "otu" & Call != "match" )  %>%
+  pull(Read)
+
+# remove chimeras from unique reads
+# write to file 
+unique_reads %>%
+  filter(!(Header %in% chimeras)) %>%
+  writeFasta("Chimera_removal/unique_reads_non_chimeras.fa")
+
+
+
+```
+
+
+
+# in case i want an interactive node
+salloc --cpus-per-task=8 --time=02:00:00 --partition=debug
