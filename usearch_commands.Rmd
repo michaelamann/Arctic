@@ -168,15 +168,176 @@ chimeras <-
   filter(Call != "otu" & Call != "match" )  %>%
   pull(Read)
 
+
+# setting an arbiratry size so i can cluster these first. Then compare arctic reads to each of these
+tedersoo_otus <- 
+  readFasta("Tedersoo_dataset/Tedersoo_Fungi_GSMc_OTUs.fasta") %>%
+  mutate(Header = str_remove(Header, pattern = "\\t.*")) %>%
+  mutate(Header = paste0(Header, ";size=549193;"))
+  
+
 # remove chimeras from unique reads
 # write to file 
-unique_reads %>%
+tedersoo_otus %>%
+  bind_rows(unique_reads) %>%
   filter(!(Header %in% chimeras)) %>%
-  writeFasta("Chimera_removal/unique_reads_non_chimeras.fa")
+  writeFasta("Chimera_removal/tedersoo_arctice_to_cluster_98.fasta")
 
 
 
 ```
+
+
+
+
+```{bash   arctic_leho_cluster_98.slurm}
+
+
+#!/bin/bash
+#SBATCH --ntasks=1
+#SBATCH --mem=0
+#SBATCH --cpus-per-task=8 
+#SBATCH --time=48:00:00
+#SBATCH --job-name=clustering_chimeras
+
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+/users/mimann/usearch8.1.1861_i86linux32 -cluster_smallmem tedersoo_arctice_to_cluster_98.fasta -id .98 -centroids otus_tedersoo_arctic_98.fasta -strand both -uc clusters.uc -sortedby size
+```
+
+
+```{bash otu_duplicates_98_check.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=48:00:00
+#SBATCH --job-name=find_duplicates_98_clustering
+
+
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+
+# checkign for duplicates that might be shorter but the same things. 
+/users/mimann/usearch9 -usearch_global otus_tedersoo_arctic_98.fasta -db otus_tedersoo_arctic_98.fasta -id 0.98 -blast6out otus_98_duplicate_hits.b6 -strand both -maxaccepts 500 -threads 8
+
+```
+
+
+
+One tricky thing I am running into is Tedersoo's OTUs are not all trimed to the same length. Thus, some are lacking on the end of the ITS4 region. This creates a minor complication where I have partial sequences (Missing 5.8S region) but extend beyond the Tedersoo OTUs. Because of this, Removing the shorter reads might result in sequences that do not map back properly to Tedersoo's OTUS. 
+instead, I will keep the rep seq with everything, (once I reorder it to match the input) and then afterwards use the otus_98_duplicate_hits.b6 file to merge the OTUs that are truly a subet of the larger OTU. I will be extra conservative and assume if it maps back on otus_98_duplicate_hits.b6 at 98%, then I will choose the longest (presumably the Tedersoo OTU) as the representative sequence. This should cut down on the number of OTUs and make it comparable across datasets. 
+
+
+Reorder rep seq. Make sure it matches input file
+```{r reorder otu rep seq}
+library(microseq)
+library(tidyverse)
+
+
+otus_names <- 
+  readFasta("OTUs/otus_tedersoo_arctic_98.fasta") %>%
+  pull(Header)
+
+
+# going to make sure OTU file is in the right order so using initial list 
+# now i can use this to map seqs 
+uniques <- readFasta("Chimera_removal/tedersoo_arctice_to_cluster_98.fasta")
+
+uniques %>%
+  filter(Header %in% otus_names) %>%
+  writeFasta("OTUs/otus_tedersoo_arctic_98_ordered_properly.fasta")
+  
+```
+
+
+
+Mapping read counts back to each sample
+```{bash mapping_otus_98.slurm}
+#!/bin/bash
+#SBATCH --ntasks=8
+#SBATCH --mem=0
+#SBATCH --time=48:00:00
+#SBATCH --job-name=mapping_otus_98
+
+
+cd /users/mimann/wheeler-scratch/arctic/clustering
+
+/users/mimann/usearch9 -usearch_global arctic_filtered.fasta -db otus_tedersoo_arctic_98_ordered_properly.fasta -strand both -id 0.98 -otutabout arctic_otu_table_98.txt
+```
+
+
+
+duplicate code
+
+Read in hit data that the otus blasted against itself at 98% or higher. 
+```{r read in data}
+library(microseq)
+library(tidyverse)
+  # using blast6 column names (listed on usearch)
+hits <- read_table("OTUs/otus_98_duplicate_hits.b6", 
+                   col_names = c("Query_Label", "Target_Label", "Percent_Identity", "Alignment_Length", 
+                                 "Mismatches", "Gaps", "Start_Query", "End_Query", "Start_Target", "End_Target", 
+                                 "E_Value", "Bit_score"))
+
+otus <- readFasta("OTUs/otus_tedersoo_arctic_98.fasta")
+
+# going to make sure OTU file is in the right order so using initial list 
+uniques <- readFasta("Chimera_removal/tedersoo_arctice_to_cluster_98.fasta")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Cleaning up hits that are likely due to using forward reads that are more abudnant than the longer full reads. 
+Just a problem that occur with using a greedy algorithm. 
+```{r clean up hits}
+
+otu_read_length <- 
+  otus %>%
+  mutate(read_length = nchar(Sequence)) %>%
+  select(-Sequence)
+  
+  
+
+
+
+potential_duplicates <- 
+  hits %>%
+  filter(Query_Label != Target_Label)  %>% # remove hits to the same sequence. 
+  left_join(otu_read_length, by = c("Query_Label" = "Header")) %>% 
+  rename(Query_length = read_length) %>%
+  left_join(otu_read_length, by = c("Target_Label" = "Header")) %>% 
+  rename(Target_length = read_length) %>%
+  filter(Query_length <= Target_length) %>% # only include hits with a shorter query seq than target seq
+  filter(Alignment_Length / Query_length > .70) %>% # make sure alignment spans query 
+  mutate(percent_coverage = Alignment_Length /End_Query) %>%
+  View()
+  
+   %>% # find query seqs that are shorter than their targets. These probably need to be removed.
+  pull(Query_Label)
+
+
+otus %>%
+  filter(!(Header %in% potential_duplicates)) %>% # remove duplicates
+  writeFasta("ZOTUs/zotus_removed_duplicates.fa")
+```
+
+
+
+
+
+
+
 
 
 
